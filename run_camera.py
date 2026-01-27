@@ -3,8 +3,8 @@ from ultralytics import YOLO
 
 def main():
     # Load the YOLOv11 model
-    # Assuming the user has 'best.pt' in the same directory
-    model_path = "best.pt"
+    # Assuming the user has 'idcard.pt' in the same directory
+    model_path = "idcard.pt"
     try:
         model = YOLO(model_path)
     except Exception as e:
