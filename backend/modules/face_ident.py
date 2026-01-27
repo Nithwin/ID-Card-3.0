@@ -76,9 +76,10 @@ class FaceIdentifier:
             pickle.dump(data, f)
         print("[INFO] Embeddings saved.")
 
-    def identify(self, frame, person_bbox, threshold=0.4):
+    def identify(self, frame, person_bbox, threshold=0.35):
         """
         Identifies the person within the bbox.
+        Lowered threshold to 0.35 for better matching (was 0.4)
         """
         # Crop the person from the frame
         x1, y1, x2, y2 = map(int, person_bbox)
@@ -87,34 +88,53 @@ class FaceIdentifier:
         x2, y2 = min(w, x2), min(h, y2)
 
         person_roi = frame[y1:y2, x1:x2]
-        if person_roi.size == 0 or self.known_face_embeddings.shape[0] == 0:
+        if person_roi.size == 0 or len(self.known_face_embeddings) == 0:
             return "Unknown"
 
-        # InsightFace expects full image usually for best detection context, 
-        # but running on ROI works if resolution is okay.
-        faces = self.app.get(person_roi)
+        # Use full frame for better detection context, but focus on person region
+        # InsightFace works better with full image context
+        faces = self.app.get(frame)
 
         if not faces:
-            return "Unknown"
-
-        # Take the largest face in the ROI
-        target_face = max(faces, key=lambda x: (x.bbox[2]-x.bbox[0]) * (x.bbox[3]-x.bbox[1]))
+            # Fallback: try ROI if full frame detection fails
+            faces = self.app.get(person_roi)
+            if not faces:
+                return "Unknown"
+            # For ROI, just take the largest face
+            target_face = max(faces, key=lambda x: (x.bbox[2]-x.bbox[0]) * (x.bbox[3]-x.bbox[1]))
+        else:
+            # Filter faces that are within the person bbox
+            valid_faces = []
+            for face in faces:
+                fx1, fy1, fx2, fy2 = face.bbox
+                # Check if face center is within person bbox
+                face_cx = (fx1 + fx2) / 2
+                face_cy = (fy1 + fy2) / 2
+                if x1 <= face_cx <= x2 and y1 <= face_cy <= y2:
+                    valid_faces.append(face)
+            
+            if not valid_faces:
+                return "Unknown"
+            
+            # Take the largest valid face
+            target_face = max(valid_faces, key=lambda x: (x.bbox[2]-x.bbox[0]) * (x.bbox[3]-x.bbox[1]))
         target_embedding = target_face.embedding
 
-        # Compare with DB
-        # Compute Cosine Similarity
-        # (A . B) / (||A|| * ||B||) - InsightFace embeddings are usually normalized, 
-        # but let's be safe.
-        
+        # Compare with DB - Compute Cosine Similarity
         sims = cosine_similarity([target_embedding], self.known_face_embeddings)[0]
         
         # Find best match
         best_idx = np.argmax(sims)
         best_score = sims[best_idx]
+        
+        # Debug: show all scores
+        print(f"[DEBUG] Face recognition scores:")
+        for i, (name, score) in enumerate(zip(self.known_face_names, sims)):
+            print(f"  {name}: {score:.3f}")
 
         if best_score > threshold:
-            print(f"[DEBUG] match found: {self.known_face_names[best_idx]} with score {best_score:.2f}")
+            print(f"[MATCH] Identified: {self.known_face_names[best_idx]} (score: {best_score:.3f}, threshold: {threshold})")
             return self.known_face_names[best_idx]
         
-        print(f"[DEBUG] No match. Best: {self.known_face_names[best_idx]} ({best_score:.2f}) < {threshold}")
+        print(f"[NO MATCH] Best: {self.known_face_names[best_idx]} ({best_score:.3f}) < threshold ({threshold})")
         return "Unknown"

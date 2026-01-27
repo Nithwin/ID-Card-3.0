@@ -1,73 +1,87 @@
 # ID Card 3.0 Compliance System (V3)
 
 ## Overview
-A full-stack AI surveillance application designed to ensure ID card compliance in secured areas. 
-V3 introduces a Client-Server architecture with a Flutter Frontend and FastAPI Backend.
+**ID Guard 3.0** is an enterprise-grade AI surveillance application designed to ensure ID card compliance in secured areas. It features a **Client-Server architecture** with a high-performance **FastAPI Backend** and a **Modern Flutter Frontend** with a professional "Glassmorphism" UI.
 
-## Features (V3)
+## Features
+- **Modern Dashboard**: secure, web-app style dashboard with Sidebar navigation, Glassmorphism, and interactive charts.
 - **Authentication**: Secure Login/Registration with JWT & Password Hashing.
-- **Dashboard**: Real-time stats (Compliance Rate, Violations Today) with interactive charts.
-- **Live Surveillance**: Real-time camera feed with bounding box overlays for ID Card verification.
+- **Real-time Surveillance**: 
+    - **YOLOv8** for Person and ID Card detection.
+    - **InsightFace** for Identity Recognition.
+    - **Compliance Tracking**: Detects if a person is wearing their ID card.
 - **Video Analysis**: Upload and analyze pre-recorded video files for violations.
-- **Modern UI**: "Glassmorphism" Dark Theme built with Flutter.
+- **Profile Management**: User profile and role management.
 - **Persistence**: SQLite database for users and violation logs.
 
-## Tech Stack
-- **Backend**: Python, FastAPI, SQLModel, SQLite, OpenCV, YOLOv8, InsightFace.
-- **Frontend**: Flutter (Windows/Android), Dio, Fl_Chart, Providers.
+## Architecture & Workflow
+
+### 1. Detection Pipeline (Backend)
+The `server.py` handles the core logic:
+1.  **Input**: Accepts an image frame (from Live Camera or Video File).
+2.  **YOLOv8 (`detect_frame`)**: 
+    - Scans the image for `Person` (Class 1) and `ID Card` (Class 0) objects.
+    - Returns Bounding Boxes for all detections.
+3.  **Compliance Logic (`tracker.py`)**:
+    - Checks if an `ID Card` box is spatially **inside** or **near** a `Person` box.
+    - If a Person has no associated ID Card -> **VIOLATION**.
+    - If a Person has an ID Card -> **COMPLIANT**.
+4.  **Identity Recognition (`face_ident.py`)**:
+    - If a face is visible, it extracts the face embedding using **InsightFace**.
+    - Compares (Cosine Similarity) against a database of known embeddings (`database/encodings.pkl`).
+    - Returns the Name of the person or "Unknown".
+
+### 2. Frontend (Flutter)
+- **State Management**: Uses `setState` and standard Flutter states (simple & effective).
+- **Communication**: Uses `dio` and `http` to send frames to the backend (`POST /detect`).
+- **UI Design**: 
+    - **Theme**: Deep Slate (`#0F172A`) with Ocean Blue accents.
+    - **Components**: Custom `GlassCard`, `ModernSidebar`, and `FlChart` integrations.
 
 ## Installation
 
-### 1. Prerequisites
-- Python 3.9+
-- Flutter SDK
-- Node.js (optional, for some tools)
+### Prerequisites
+- **Python 3.9+** (Ensure `pip` is upgraded).
+- **Flutter SDK** (Latest Stable).
+- **C++ Build Tools**: Required for compiling `insightface` or `dlib`. (Visual Studio Build Tools on Windows).
 
-### 2. Backend Setup
-Navigate to the backend folder:
-```powershell
-cd backend
-```
-Install dependencies:
-```powershell
-pip install fastapi "uvicorn[standard]" sqlmodel python-jose[cryptography] passlib[bcrypt] python-multipart ultralytics insightface onnxruntime opencv-python numpy
-```
-*Note: If you have a GPU, install `onnxruntime-gpu`. If not, use `onnxruntime`.*
+### Backend Setup
+1.  Navigate to `backend/`:
+    ```powershell
+    cd backend
+    ```
+2.  Install dependencies:
+    ```powershell
+    pip install fastapi "uvicorn[standard]" sqlmodel python-jose[cryptography] passlib[bcrypt] python-multipart ultralytics insightface onnxruntime opencv-python numpy
+    ```
+    *Note: If you encounter a `Nuget.exe` error or `insightface` build error, ensure you have C++ Build Tools installed.*
 
-### 3. Frontend Setup
-Navigate to the frontend folder:
-```powershell
-cd frontend
-```
-Get Flutter packages:
-```powershell
-flutter pub get
-```
+### Frontend Setup
+1.  Navigate to `frontend/`:
+    ```powershell
+    cd frontend
+    ```
+2.  Install packages:
+    ```powershell
+    flutter pub get
+    ```
 
 ## Usage
 
-### Step 1: Start Backend Server
-The server must be running for the app to work.
+### 1. Start Support Server
 ```powershell
 cd backend
 python server.py
 ```
 *Server runs on: http://127.0.0.1:8081*
 
-### Step 2: Run Flutter App
-Open a new terminal and run:
+### 2. Start Application
 ```powershell
 cd frontend
 flutter run -d windows
 ```
 
-## How to Use
-1.  **Register**: Create a new account on the Login screen.
-2.  **Dashboard**: View daily statistics.
-3.  **Analyze Video**: Click "Analyze Video File" -> Select a video -> Wait for processing. results will appear below.
-4.  **Live Mode**: Click "Start Live Surveillance" to open the camera feed.
-
 ## Troubleshooting
-- **Port Error**: If Port 8081 is busy, close other python processes or change the port in `server.py` and `frontend/lib/services/api_service.dart`.
-- **500 Error**: Ensure `bcrypt` is installed (`pip install bcrypt`).
-- **File Picker Error**: Ensure `file_picker` is version `^8.0.0` or `^6.0.0` depending on your Flutter version.
+- **Nuget Not Found**: This implies `dlib` or `insightface` is trying to build from source without pre-compiled wheels. Try installing `cmake` (`pip install cmake`) and ensure Visual Studio C++ tools are installed.
+- **Port Busy**: Change port 8081 in `server.py` and `api_service.dart`.
+- **Model Download**: On first run, YOLO and InsightFace will download models (~200MB). Ensure internet access.

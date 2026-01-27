@@ -1,0 +1,10 @@
+from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
+import os
+
+# Mount violations directory to serve images
+violations_dir = "database/violations"
+if not os.path.exists(violations_dir):
+    os.makedirs(violations_dir)
+
+app.mount("/violations", StaticFiles(directory=violations_dir), name="violations")
