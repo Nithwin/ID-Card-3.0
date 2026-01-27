@@ -31,8 +31,9 @@ venv/
 .idea/
 
 # Dataset/Videos (Optional - comment out if you want to track them)
-# *.mp4
-# dataset/
+*.mp4
+dataset/
+backend/dataset/
 
 # Models (Optional - comment out if you want to track them)
 # *.pt
