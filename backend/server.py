@@ -8,6 +8,8 @@ import numpy as np
 import shutil
 import os
 import io
+import time
+import json
 
 # Import Modules
 from modules.face_ident import FaceIdentifier
@@ -232,116 +234,134 @@ async def detect_frame(
 async def analyze_video(
     file: UploadFile = File(...),
     session: Session = Depends(get_session)
-    # current_user: User = Depends(get_current_user)
 ):
     """
-    Upload a video file, process it frame-by-frame, detect violations,
-    identify persons, save snapshots, and return detailed results.
+    Streaming endpoint: Upload video, process, yield progress updates, and return final result.
+    Format: Newline Delimited JSON (NDJSON).
     """
-    global model, tracker, face_ident
-    
     # Save Temp File
     temp_filename = f"temp_{file.filename}"
     with open(temp_filename, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
 
-    cap = cv2.VideoCapture(temp_filename)
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    
-    violations_data = {}  # {track_id: {name, bbox, frame, timestamp, image_path}}
-    analyzed_frames = 0
-    frame_step = 5  # Process every 5th frame for speed
-    
-    try:
-        while cap.isOpened():
-            ret, frame = cap.read()
-            if not ret:
-                break
+    async def video_processor():
+        global model, tracker, face_ident
+        
+        cap = cv2.VideoCapture(temp_filename)
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        
+        violations_data = {}
+        analyzed_frames = 0
+        frame_step = 8 # Process every 8th frame
+        
+        start_time = time.time()
+        
+        try:
+            while cap.isOpened():
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                    
+                analyzed_frames += 1
+                if analyzed_frames % frame_step != 0:
+                    continue
+                    
+                # Progress Calculation
+                current_time = time.time()
+                elapsed = current_time - start_time
+                progress = analyzed_frames / total_frames if total_frames > 0 else 0
                 
-            analyzed_frames += 1
-            if analyzed_frames % frame_step != 0:
-                continue
+                # Estimate Time Left
+                if progress > 0.01:
+                    total_estimated_time = elapsed / progress
+                    time_left = total_estimated_time - elapsed
+                    time_left_str = f"{int(time_left)}s"
+                else:
+                    time_left_str = "Calculating..."
+
+                # Yield Progress
+                yield json.dumps({
+                    "status": "processing",
+                    "progress": round(progress * 100, 1),
+                    "time_left": time_left_str
+                }) + "\n"
                 
-            # Detection Logic
-            results = model.track(frame, persist=True, verbose=False, conf=0.4)
+                # --- Detection Logic ---
+                results = model.track(frame, persist=True, verbose=False, conf=0.4)
+                
+                if results and results[0].boxes:
+                    person_tracks = []
+                    id_card_boxes = []
+                    for box in results[0].boxes:
+                        cls = int(box.cls[0])
+                        coords = box.xyxy[0].cpu().numpy().tolist()
+                        if cls == 1 and box.id is not None:
+                             person_tracks.append(coords + [int(box.id[0])])
+                        elif cls == 0:
+                             id_card_boxes.append(coords)
+                    
+                    display_data = tracker.update(frame, person_tracks, id_card_boxes)
+                    
+                    for item in display_data:
+                        if "VIOLATION" in item['status']:
+                            track_id = item['id']
+                            if track_id not in violations_data:
+                                person_name = item.get('name', 'Unknown')
+                                bbox = item['bbox']
+                                if person_name == 'Unknown' or person_name == '':
+                                    person_name = face_ident.identify(frame, bbox)
+                                from modules.utils import save_violation
+                                image_path = save_violation(frame, person_name, bbox)
+                                
+                                seconds = (analyzed_frames * frame_step) / fps if fps > 0 else 0
+                                violations_data[track_id] = {
+                                    "name": person_name,
+                                    "bbox": bbox,
+                                    "frame_number": analyzed_frames,
+                                    "timestamp": round(seconds, 2),
+                                    "image_path": image_path,
+                                    "violation_type": "No ID Card"
+                                }
+                                violation_log = ViolationLog(
+                                    person_name=person_name,
+                                    image_path=image_path,
+                                    track_id=track_id, 
+                                    status="VIOLATION"
+                                )
+                                session.add(violation_log)
+                                session.commit()
+                
+                # Small sleep to yield control back to event loop if needed
+                # await asyncio.sleep(0) # Not strictly detecting async here but good practice
+
+        finally:
+            cap.release()
+            os.remove(temp_filename)
+        
+        # Final Result
+        violations_list = []
+        for track_id, data in violations_data.items():
+            violations_list.append({
+                "track_id": track_id,
+                "name": data["name"],
+                "timestamp": data["timestamp"],
+                "frame_number": data["frame_number"],
+                "image_path": data["image_path"],
+                "violation_type": data["violation_type"]
+            })
             
-            if results and results[0].boxes:
-                person_tracks = []
-                id_card_boxes = []
-                for box in results[0].boxes:
-                    cls = int(box.cls[0])
-                    coords = box.xyxy[0].cpu().numpy().tolist()
-                    if cls == 1 and box.id is not None:
-                         person_tracks.append(coords + [int(box.id[0])])
-                    elif cls == 0:
-                         id_card_boxes.append(coords)
-                
-                # Update Tracker (detects violations)
-                display_data = tracker.update(frame, person_tracks, id_card_boxes)
-                
-                # Process violations
-                for item in display_data:
-                    if "VIOLATION" in item['status']:
-                        track_id = item['id']
-                        
-                        # Only save once per track_id
-                        if track_id not in violations_data:
-                            person_name = item.get('name', 'Unknown')
-                            bbox = item['bbox']
-                            
-                            # If name is still empty/Unknown, try face recognition again
-                            if person_name == 'Unknown' or person_name == '':
-                                person_name = face_ident.identify(frame, bbox)
-                            
-                            # Save violation snapshot
-                            from modules.utils import save_violation
-                            image_path = save_violation(frame, person_name, bbox)
-                            
-                            # Calculate timestamp
-                            seconds = (analyzed_frames * frame_step) / fps if fps > 0 else 0
-                            
-                            violations_data[track_id] = {
-                                "name": person_name,
-                                "bbox": bbox,
-                                "frame_number": analyzed_frames,
-                                "timestamp": round(seconds, 2),
-                                "image_path": image_path,
-                                "violation_type": "No ID Card"
-                            }
-                            
-                            # Save to database
-                            violation_log = ViolationLog(
-                                person_name=person_name,
-                                image_path=image_path,
-                                track_id=track_id,
-                                status="VIOLATION"
-                            )
-                            session.add(violation_log)
-                            session.commit()
+        final_response = {
+            "status": "complete",
+            "filename": file.filename,
+            "total_frames_processed": analyzed_frames,
+            "violations_detected": len(violations_list),
+            "violations": violations_list
+        }
+        yield json.dumps(final_response) + "\n"
 
-    finally:
-        cap.release()
-        os.remove(temp_filename)
-
-    # Format results for frontend
-    violations_list = []
-    for track_id, data in violations_data.items():
-        violations_list.append({
-            "track_id": track_id,
-            "name": data["name"],
-            "timestamp": data["timestamp"],
-            "frame_number": data["frame_number"],
-            "image_path": data["image_path"],
-            "violation_type": data["violation_type"]
-        })
-
-    return {
-        "filename": file.filename,
-        "total_frames_processed": analyzed_frames,
-        "violations_detected": len(violations_list),
-        "violations": violations_list
-    }
+    from fastapi.responses import StreamingResponse
+    return StreamingResponse(video_processor(), media_type="application/x-ndjson")
 
 
 if __name__ == "__main__":
