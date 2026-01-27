@@ -37,3 +37,8 @@ backend/dataset/
 
 # Models (Optional - comment out if you want to track them)
 # *.pt
+*.onnx
+
+# Rust
+target/
+**/*.rs.bk

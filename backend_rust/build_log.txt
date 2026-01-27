@@ -1,0 +1,23 @@
+    Checking backend_rust v0.1.0 (C:\Users\vmnit\Desktop\ID Card 3.0\backend_rust)
+warning: unused variable: `outputs`
+  --> src\yolo.rs:58:13
+   |
+58 |         let outputs = self.session.run(ort::inputs![input_tensor])?;
+   |             ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_outputs`
+   |
+   = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+error[E0596]: cannot borrow `self.session` as mutable, as it is behind a `&` reference
+  --> src\yolo.rs:58:23
+   |
+58 |         let outputs = self.session.run(ort::inputs![input_tensor])?;
+   |                       ^^^^^^^^^^^^ `self` is a `&` reference, so the data it refers to cannot be borrowed as mutable
+   |
+help: consider changing this to be a mutable reference
+   |
+23 |     pub fn detect(&mut self, image_data: &[u8]) -> Result<Vec<Detection>> {
+   |                    +++
+
+For more information about this error, try `rustc --explain E0596`.
+warning: `backend_rust` (bin "backend_rust") generated 1 warning
+error: could not compile `backend_rust` (bin "backend_rust") due to 1 previous error; 1 warning emitted
