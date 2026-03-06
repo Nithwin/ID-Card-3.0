@@ -42,3 +42,13 @@ backend/dataset/
 # Rust
 target/
 **/*.rs.bk
+
+# Logs
+*.log
+backend/*.log
+
+# Next.js
+frontend_next/.next/
+frontend_next/node_modules/
+frontend_next/.env*.local
+frontend_next/.vercel
